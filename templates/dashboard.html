@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Baby Log Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { background-color: #09090b; color: #e4e4e7; font-family: sans-serif; }
+        .card { background-color: #18181b; border: 1px solid #27272a; border-radius: 0.75rem; padding: 1.5rem; }
+        .stat-label { color: #a1a1aa; font-size: 0.875rem; font-weight: 500; }
+        .stat-value { color: #f4f4f5; font-size: 1.875rem; font-weight: 700; margin-top: 0.25rem; }
+        .stat-sub { color: #71717a; font-size: 0.75rem; margin-top: 0.25rem; }
+    </style>
+</head>
+<body class="p-6 md:p-12 max-w-7xl mx-auto">
+
+    <header class="mb-10 flex items-center justify-between">
+        <div>
+            <h1 class="text-3xl font-bold tracking-tight text-white mb-2">Baby Dashboard</h1>
+            <p class="text-zinc-500">Real-time stats from your voice logs.</p>
+        </div>
+        <div id="status-dot" class="w-3 h-3 rounded-full bg-red-500 animate-pulse" title="Live"></div>
+    </header>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        
+        <div class="card lg:col-span-2">
+            <div class="flex items-center gap-3 mb-2">
+                <i data-lucide="milk" class="text-blue-400 w-5 h-5"></i>
+                <span class="stat-label">Last Breastfeed</span>
+            </div>
+            <div id="last-feed-time" class="stat-value">--:--</div>
+            <div id="last-feed-side" class="text-xl font-medium text-blue-300 mt-1">--</div>
+            <div id="last-feed-ago" class="stat-sub">Waiting for data...</div>
+        </div>
+
+        <div class="card">
+            <div class="flex items-center gap-3 mb-2">
+                <i data-lucide="baby" class="text-pink-400 w-5 h-5"></i>
+                <span class="stat-label">Nappies (Today)</span>
+            </div>
+            <div id="nappies-today" class="stat-value">0</div>
+            <div id="nappies-avg-week" class="stat-sub">Avg 0 / day (Last 7d)</div>
+        </div>
+
+        <div class="card">
+            <div class="flex items-center gap-3 mb-2">
+                <i data-lucide="clock" class="text-emerald-400 w-5 h-5"></i>
+                <span class="stat-label">Avg Feed Time (7d)</span>
+            </div>
+            <div id="avg-feed-week" class="stat-value">-- m</div>
+            <div id="avg-feed-day" class="stat-sub">Today's avg: -- m</div>
+        </div>
+        
+        <div class="card">
+            <div class="flex items-center gap-3 mb-2">
+                <i data-lucide="calculator" class="text-purple-400 w-5 h-5"></i>
+                <span class="stat-label">Lifetime Nappy Avg</span>
+            </div>
+            <div id="nappies-avg-life" class="stat-value">0</div>
+            <div class="stat-sub">Per day since inception</div>
+        </div>
+
+    </div>
+
+    <div class="mt-10">
+        <h3 class="text-lg font-semibold text-white mb-4">Recent Logs</h3>
+        <div class="overflow-hidden rounded-xl border border-zinc-800">
+            <table class="w-full text-left text-sm text-zinc-400">
+                <thead class="bg-zinc-900 text-zinc-200 uppercase text-xs">
+                    <tr>
+                        <th class="px-6 py-3 font-medium">Time</th>
+                        <th class="px-6 py-3 font-medium">Type</th>
+                        <th class="px-6 py-3 font-medium">Note</th>
+                    </tr>
+                </thead>
+                <tbody id="log-table-body" class="divide-y divide-zinc-800 bg-[#161618]">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+
+<script>
+    lucide.createIcons();
+
+    // Fetch and Process Data
+    async function loadData() {
+        try {
+            const response = await fetch('/api/data'); // Hit our internal proxy
+            const csvText = await response.text();
+            
+            Papa.parse(csvText, {
+                header: true,
+                skipEmptyLines: true,
+                complete: function(results) {
+                    processStats(results.data);
+                }
+            });
+            document.getElementById('status-dot').classList.replace('bg-red-500', 'bg-green-500');
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    function processStats(data) {
+        // 1. Sort Data (Newest First) based on Timestamp
+        // Format assumption: M/D/YYYY HH:MM:SS (Google Forms default)
+        const parsedData = data.map(row => {
+            const ts = new Date(row.Timestamp); 
+            return { ...row, jsDate: ts };
+        }).sort((a, b) => b.jsDate - a.jsDate);
+
+        // --- STAT 1: LAST BREASTFEED ---
+        const lastFeed = parsedData.find(r => r.LogType && r.LogType.includes('Breastfeeding') && !r.LogType.includes('Pause') && !r.LogType.includes('Unpause'));
+        if (lastFeed) {
+            document.getElementById('last-feed-time').innerText = lastFeed.jsDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            document.getElementById('last-feed-side').innerText = lastFeed.LogType;
+            
+            // Calc time ago
+            const diffMins = Math.floor((new Date() - lastFeed.jsDate) / 60000);
+            const hours = Math.floor(diffMins / 60);
+            const mins = diffMins % 60;
+            document.getElementById('last-feed-ago').innerText = `${hours}h ${mins}m ago`;
+        }
+
+        // --- STAT 2: NAPPIES ---
+        const today = new Date().setHours(0,0,0,0);
+        const nappies = parsedData.filter(r => r.LogType === 'Nappy Change');
+        
+        // Today
+        const nappiesToday = nappies.filter(r => r.jsDate.setHours(0,0,0,0) === today).length;
+        document.getElementById('nappies-today').innerText = nappiesToday;
+
+        // Avg Last 7 Days
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        const nappiesWeek = nappies.filter(r => r.jsDate > sevenDaysAgo);
+        const avgNappiesWeek = (nappiesWeek.length / 7).toFixed(1);
+        document.getElementById('nappies-avg-week').innerText = `Avg ${avgNappiesWeek} / day (Last 7d)`;
+
+        // Lifetime Avg
+        if (nappies.length > 0) {
+            const firstDate = nappies[nappies.length - 1].jsDate; // Oldest is last
+            const daysSince = Math.max(1, (new Date() - firstDate) / (1000 * 60 * 60 * 24));
+            document.getElementById('nappies-avg-life').innerText = (nappies.length / daysSince).toFixed(1);
+        }
+
+        // --- STAT 3: FEED DURATION ---
+        // Logic: Find a "Breastfeeding" Start event, look at the VERY NEXT event in time.
+        // Duration = Next Event Time - Start Time. (Cap at 60 mins to remove outliers)
+        let totalDuration = 0;
+        let count = 0;
+        let todayDuration = 0;
+        let todayCount = 0;
+        
+        // We need chronological order for this loop
+        const chronoData = [...parsedData].reverse(); 
+
+        for (let i = 0; i < chronoData.length - 1; i++) {
+            const row = chronoData[i];
+            if (row.LogType && row.LogType.includes('Breastfeeding') && !row.LogType.includes('Pause') && !row.LogType.includes('Unpause')) {
+                const nextEvent = chronoData[i+1];
+                const diffMs = nextEvent.jsDate - row.jsDate;
+                const diffMins = diffMs / 60000;
+
+                // Sanity check: valid feed is usually between 1 min and 60 mins
+                if (diffMins > 1 && diffMins < 60) {
+                    // Check if it's within last 7 days
+                    if (row.jsDate > sevenDaysAgo) {
+                        totalDuration += diffMins;
+                        count++;
+                    }
+                    // Check if today
+                    if (row.jsDate.setHours(0,0,0,0) === today) {
+                        todayDuration += diffMins;
+                        todayCount++;
+                    }
+                }
+            }
+        }
+
+        if (count > 0) document.getElementById('avg-feed-week').innerText = Math.round(totalDuration / count) + " m";
+        if (todayCount > 0) document.getElementById('avg-feed-day').innerText = "Today's avg: " + Math.round(todayDuration / todayCount) + " m";
+
+        // --- RENDER TABLE ---
+        const tableBody = document.getElementById('log-table-body');
+        tableBody.innerHTML = '';
+        parsedData.slice(0, 10).forEach(row => { // Show top 10
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td class="px-6 py-4 whitespace-nowrap text-zinc-300">${row.jsDate.toLocaleDateString()} ${row.jsDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
+                <td class="px-6 py-4 whitespace-nowrap"><span class="px-2 py-1 rounded-md bg-zinc-800 text-xs border border-zinc-700">${row.LogType}</span></td>
+                <td class="px-6 py-4 text-zinc-500 truncate max-w-xs">${row['Recording Transcript'] || '-'}</td>
+            `;
+            tableBody.appendChild(tr);
+        });
+    }
+
+    loadData();
+    setInterval(loadData, 30000); // Refresh every 30s
+</script>
+</body>
+</html>
